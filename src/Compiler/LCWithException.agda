@@ -53,6 +53,7 @@ data Cmp Γ where
   return : Val Γ A → Cmp Γ (A , false)
   throw : Cmp Γ (A , true)
   catch : Cmp Γ (A , a) → Cmp Γ (A , b) → Cmp Γ (A , a ∧ b)
+  Let_In_ : Cmp Γ (A , a) → Cmp (A ∷ Γ) (B , b)  → Cmp Γ (B , a ∨ b)
 
 
 
@@ -96,6 +97,9 @@ evalc? (add e1 e2) env =
   evalc? e1 env »= λ { (num n1) →
     evalc? e2 env »= λ { (num n2) →
     just $ num $ n1 + n2 }}
+evalc? (Let e1 In e2) env =
+  evalc? e1 env »= λ { v →
+    evalc? e2 (v ∷ env) }
 
 -- evaluation for computations that cause no exception.
 evalc _ (return v) = evalv v
@@ -112,6 +116,8 @@ evalc _ (add {a = false} {b = false} e1 e2) env with (evalc refl e1 env)
 ... | (num n1) with evalc refl e2 env
 ... | (num n2) = num $ n1 + n2
 
+evalc _ (Let_In_ {a = false} {b = false} e1 e2) env with evalc refl e1 env
+... | v = evalc refl e2 (v ∷ env)
 
 -- top-level evaluation
 eval p c = evalc p c []
@@ -179,6 +185,14 @@ data Code (Γ : Ctx) : StackTy → StackTy → Set where
   APPImpure : Code Γ (ValTy B ∷ (S₁ ++ HandTy Γ₁ S₃ S₂ ∷ S₃)) S₂
         → Code Γ (ValTy A ∷ ValTy (A ⇒ (B , true)) ∷ (S₁ ++ HandTy Γ₁ S₃ S₂ ∷ S₃)) S₂
 
+  -- Let Binding let x = e1 in e2
+  -- Pop stack, and execute the body adding the value into environment
+  BIND :
+    -- let-body
+    Code (A ∷ Γ) S S' →
+    -- code continuation
+    Code Γ (ValTy B ∷ S) S' →
+    Code Γ (ValTy A ∷ S) S'
 
 -- compiled value from source language
 data EnvVal : VTy → Set
@@ -238,6 +252,9 @@ exec (APP c) (val v ∷ val (clos c' env') ∷ s) env =
 
 exec (APPImpure c) (val v ∷ val (closImpure c' env') ∷ s) env =
   exec c' (cont c env ∷ s) (v ∷ env')
+
+exec (BIND c k) (val v ∷ s) env =
+  exec c s (v ∷ env)
 
 -- Stackの1番頭にあるハンドラコードを実行
 fail {S₁ = []} ((hand h env) ∷ s) = exec h s env
