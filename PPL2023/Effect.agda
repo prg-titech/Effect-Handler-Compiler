@@ -1,4 +1,4 @@
-module Compiler.Effect where
+module Effect where
 
 open import Data.Empty
 open import Data.Nat  using (ℕ) renaming (_+_ to add)
