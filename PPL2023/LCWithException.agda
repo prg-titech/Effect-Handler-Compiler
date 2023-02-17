@@ -48,7 +48,7 @@ data Val Γ where
 
 -- Computations that may cause exception
 data Cmp Γ where
-  add : Cmp Γ (N , a) → Cmp Γ (N , b) → Cmp Γ (N , a ∨ b)
+  add : Val Γ N → Val Γ N → Cmp Γ (N , false)
   app : Val Γ (A ⇒ C) → Val Γ A → Cmp Γ C
   return : Val Γ A → Cmp Γ (A , false)
   throw : Cmp Γ (A , true)
@@ -93,13 +93,13 @@ evalc? (catch c h) env with evalc? c env
 ... | nothing = evalc? h env
 evalc? (app f e) env with evalv f env
 ... | clos b env' = evalc? b ((evalv e env) ∷ env')
-evalc? (add e1 e2) env =
-  evalc? e1 env »= λ { (num n1) →
-    evalc? e2 env »= λ { (num n2) →
-    just $ num $ n1 + n2 }}
+
+evalc? (add v1 v2) env with evalv v1 env
+... | (num x) with evalv v2 env
+... | (num y) = just $ num $ x + y
+
 evalc? (Let e1 In e2) env =
-  evalc? e1 env »= λ { v →
-    evalc? e2 (v ∷ env) }
+  evalc? e1 env »= λ { v → evalc? e2 (v ∷ env) }
 
 -- evaluation for computations that cause no exception.
 evalc _ (return v) = evalv v
@@ -112,8 +112,8 @@ evalc _ (catch {a = false} c h) env = evalc refl c env
 evalc p (app f e) env with evalv f env
 ... | clos b env' = evalc p b ((evalv e env) ∷ env')
 
-evalc _ (add {a = false} {b = false} e1 e2) env with (evalc refl e1 env)
-... | (num n1) with evalc refl e2 env
+evalc _ (add v1 v2) env with (evalv v1 env)
+... | (num n1) with evalv v2 env
 ... | (num n2) = num $ n1 + n2
 
 evalc _ (Let_In_ {a = false} {b = false} e1 e2) env with evalc refl e1 env
@@ -280,14 +280,27 @@ compileV {A = A ⇒ (B , false)} (lam cmp) c = ABS (compileC refl cmp RET) c
 
 compileC? throw _ = THROW
 compileC? (return v) c = compileV v c
-compileC? (add e1 e2) c = compileC? e1 $ compileC? {S₁ = ValTy N ∷ _} e2 $ ADD c
+compileC? (add v1 v2) c = compileV v1 $ compileV v2 $ ADD c
 compileC? (catch e h) c = MARK (compileC? h c) (compileC? {S₁ = []} e $ UNMARK c)
 compileC? {a = false} (app f e) c = compileV f $ compileV e $ APP c
 compileC? {a = true} (app f e) c = compileV f $ compileV e $ APPImpure c
 
+compileC? (Let_In_ {A = A}{a = true}{B = B}{b = true} e1 e2) c =
+  ABSImpure (λ {S₁ S₂ S₃ Γ₁ Γ'₁} → 
+    compileC? {S₁ = (ContTy Γ₁ (ValTy B ∷ (S₁ ++ HandTy Γ'₁ S₃ S₂ ∷ S₃)) S₂ ∷ _)} e2 RET) (compileC? {S₁ = ValTy (A ⇒ (B , true)) ∷ _} e1 $ APPImpure c)
+
+compileC? (Let_In_ {A = A}{a = true}{B = B}{b = false} e1 e2) c =
+  ABS (compileC refl e2 RET) (compileC? {S₁ = ValTy (A ⇒ (B , false)) ∷ _} e1 $ APP c)
+
+compileC? (Let_In_ {A = A}{a = false}{B = B}{b = true} e1 e2) c =
+  ABSImpure (λ {S₁ S₂ S₃ Γ₁ Γ'₁} → 
+    compileC? {S₁ = (ContTy Γ₁ (ValTy B ∷ (S₁ ++ HandTy Γ'₁ S₃ S₂ ∷ S₃)) S₂ ∷ _)} e2 RET) (compileC? {S₁ = ValTy (A ⇒ (B , true)) ∷ _} e1 $ APPImpure c)
+
+compileC? (Let_In_ {a = false}{b = false} e1 e2) c =
+  ABS (compileC refl e2 RET) (compileC refl e1 $ APP c)
+
 compileC _ (return v) c = compileV v c
-compileC _ (add {false} {false} e1 e2) c =
-  compileC refl e1 $ compileC refl e2 $ ADD c
+compileC _ (add v1 v2) c = compileV v1 $ compileV v2 $ ADD c
 
 compileC _ (catch {a = false} e h) c = compileC refl e c
 
@@ -297,6 +310,8 @@ compileC _ (catch {a = true} {b = false} e h) c =
 compileC _ (app {C = (A , false)} f e) c =
   compileV f $ compileV e $ APP c
 
+compileC _ (Let_In_ {a = false}{b = false} e1 e2) k =
+  ABS (compileC refl e2 RET) (compileC refl e1 $ APP k)
 
 
 top-level-compile : b ≡ false → Cmp Γ (A , b) → Code Γ S (ValTy A ∷ S)
