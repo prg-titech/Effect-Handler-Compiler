@@ -425,8 +425,8 @@ data EnvVal where
     EnvVal (Hand ((A' , E) ⇒ (B , E'))) →
     EnvVal (A ⇒ (B , E'))
 
-  -- ハンドラ値
-  fc-hand :
+  -- 第一級のハンドラ値
+  hand :
     HandlerCode Γ (A , E₁) (B , E₂) →
     RuntimeEnv Γ →
     EnvVal (Hand ((A , E₁) ⇒ (B , E₂)))
