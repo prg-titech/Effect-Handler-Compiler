@@ -426,7 +426,7 @@ data EnvVal where
     EnvVal (A ⇒ (B , E'))
 
   -- 第一級のハンドラ値
-  hand :
+  fc-hand :
     HandlerCode Γ (A , E₁) (B , E₂) →
     RuntimeEnv Γ →
     EnvVal (Hand ((A , E₁) ⇒ (B , E₂)))
@@ -477,7 +477,7 @@ exec (ADD c) (val (pval (num n)) ∷ val (pval (num m)) ∷ s) =
 exec (AND c) (val (pval (bl a)) ∷ val (pval (bl b)) ∷ s) =
   exec c ((val $ pval $ bl (a ∧ b)) ∷ s)
 
-exec (MARK mk c) (val (hand h env') ∷ s) env =
+exec (MARK mk c) (val (fc-hand h env') ∷ s) env =
   exec c (hand (cont mk env) h env' ∷ s) env
 
 exec (UNMARK) (val x ∷ (hand mk h env') ∷ s) env with h
@@ -489,7 +489,7 @@ exec (CALLOP l c) (val v ∷ s) env with split s
 ... | (s1 , (hand mk h env') , s2) with h
 ... | (_ , ops) =
   exec (lookup ops l) (mk ∷ s2)
-    (resump (c , s1 , env) (hand h env') ∷ v ∷ env')
+    (resump (c , s1 , env) (fc-hand h env') ∷ v ∷ env')
 
 exec (LOOKUP x c) s env =
   exec c ((val $ lookup env x) ∷ s) env
@@ -498,7 +498,7 @@ exec (ABS c' c) s env =
   exec c (val (clos c' env) ∷ s) env
 
 exec (HANDLER h c) s env =
-  exec c (val (hand h env) ∷ s) env
+  exec c (val (fc-hand h env) ∷ s) env
 
 exec (RET) (val v ∷ cont c env ∷ s) _ =
   exec c (val v ∷ s) env
@@ -506,7 +506,7 @@ exec (RET) (val v ∷ cont c env ∷ s) _ =
 exec (APP c) (val v ∷ val (clos c' env') ∷ s) env =
   exec c' (cont c env ∷ s) (v ∷ env')
 
-exec (APP c) (v ∷ val (resump (c' , s' , env₂) (hand h envh)) ∷ s) env =
+exec (APP c) (v ∷ val (resump (c' , s' , env₂) (fc-hand h envh)) ∷ s) env =
   exec c' (v ∷ (s' ++s (hand (cont c env) h envh ∷ s))) env₂
 
 exec (BIND c k) (val v ∷ s) env =
