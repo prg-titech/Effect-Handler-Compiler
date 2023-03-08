@@ -529,7 +529,6 @@ compileC :
   ContCode Γ (ValTy A ∷ S₁) (A' , E) →
   ∀{Γ₁ S S'} → Code Γ (S₁ ++ HandTy Γ₁ S S' (A' , E) ∷ S) S'
 
-{-# TERMINATING #-}
 -- compile operation clauses
 compileOps :
   OperationClauses Γ E₁ (B , E₂) →
