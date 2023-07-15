@@ -1,4 +1,4 @@
-module GPCE2023.CodeFig where
+module GPCE2023.Effect where
 
 open import Data.Empty
 open import Data.Nat  using (ℕ) renaming (_+_ to add)
@@ -12,8 +12,9 @@ open import Function using ( _∘_; _$_ )
 open import Data.Maybe.Base
 open import Relation.Binary.PropositionalEquality
 
---------- L_s ---------
-
+-- ************************
+-- Source Language L_s 
+-- ************************
 data VTy : Set  -- Value types
 CTy : Set       -- Computation types
 data HTy : Set  -- Handler types
@@ -78,7 +79,107 @@ OperationClauses Γ E₁ D =
   All (λ { (op A' B') → Cmp ((B' ⇒ D) ∷ A' ∷ Γ) D }) E₁
 
 
---------- Stack & L_t ---------
+-- ************************
+-- Big-step semantics & type soundness
+-- ************************
+
+
+-- Values after evaluation
+data Result : VTy → Set
+-- Environment
+Env : Ctx → Set
+
+-- Patterns of hole
+-- Frame A C ... A is expected type for the hole, C is the type of the whole expression
+data Frame : VTy → CTy → Set
+-- Shapes of pure continuations
+data PureStackFrame : VTy → CTy → Set
+-- Shapes of mata continuations
+data MetaStackFrame : CTy → CTy → Set
+
+data Result where
+  tt   : Result Unit
+  clos : ∀{A C Γ} → Cmp (A ∷ Γ) C → Env Γ → Result (A ⇒ C)
+  resump : PureStackFrame A C → Result (Hand (C ⇒ D)) → Result (A ⇒ D)
+  hand : Hdl Γ H → Env Γ → Result (Hand H)
+
+-- Environment
+Env Γ = All (λ A → Result A) Γ
+
+data Frame where
+  Let□In_,_ : (Cmp (A ∷ Γ) C) → Env Γ → Frame A C
+
+data PureStackFrame where
+  empty : PureStackFrame A (A , E)
+  extend : Frame A (A' , E) → PureStackFrame A' (B , E) →
+            PureStackFrame A (B , E)
+
+data MetaStackFrame where
+  -- empty continuation
+  empty : MetaStackFrame (A , []) (A , [])
+  -- handler and meta continuation.
+  _[_[Handle□With_]] :
+    MetaStackFrame (B , E') D →
+    PureStackFrame A' (B , E') →
+    Result (Hand ((A , E) ⇒ (A' , E'))) →
+    MetaStackFrame (A , E) D
+
+-- type-safe, top-level evaluation
+eval : Cmp [] (A , []) → Result A
+
+-- type-safe evaluation for pure values
+evalv : Val Γ A → Env Γ → Result A
+
+-- type-safe evaluation for effectful computations
+{-# TERMINATING #-}
+evalc : Cmp Γ (A , E) → Env Γ →
+        PureStackFrame A (A' , E) → MetaStackFrame (A' , E) (B , []) →
+        Result B
+
+-- Resume continuation by putting given value into the hole of given continuation
+resumeCont :
+  Result A →
+  PureStackFrame A (A' , E) → MetaStackFrame (A' , E) (B , []) →
+  Result B
+
+
+eval c = evalc c [] empty empty
+
+
+resumeCont v empty (H [ K [Handle□With h ]]) with h
+... | (hand (ƛx ret |ƛx,r _) env') =
+  evalc ret (v ∷ env') K H
+resumeCont v empty empty = v
+resumeCont v (extend (Let□In e2 , env) K) =
+  evalc e2 (v ∷ env) K 
+
+
+evalv Unit _          = tt
+evalv (Var x) env     = lookup env x
+evalv (Lam f) env     = clos f env
+evalv (Handler h) env = hand h env
+
+evalc (App v1 v2) env K H with evalv v1 env
+... | clos e' env' = evalc e' ((evalv v2 env) ∷ env') K H
+... | resump K' h' = resumeCont (evalv v2 env) K' (H [ K [Handle□With h' ]])
+
+evalc (Return v) env K =
+  resumeCont (evalv v env) K
+
+evalc (Do l v) env K (H [ K' [Handle□With h ]]) with h
+... | hand (ƛx ret |ƛx,r es) env' =
+  evalc (lookup es l) ((resump K (hand (ƛx ret |ƛx,r es) env')) ∷ (evalv v env) ∷ env') K' H
+
+evalc (Handle e With h) env K H =
+  evalc e env empty $ (H [ K [Handle□With (evalv h env) ]])
+
+evalc (Let e1 In e2) env K =
+  evalc e1 env $ extend (Let□In e2 , env) K
+
+
+-- ****************************
+-- Stack & target language L_t
+-- ****************************
 data SValTy : Set
 StackTy : Set
 
@@ -102,9 +203,9 @@ data PVal : VTy → Set where
 data Code (Γ : Ctx) : StackTy → StackTy → Set
 OperationCodes : VTy → Eff → Eff → Ctx → StackTy → StackTy → Set
 HandlerCode : Ctx → CTy → CTy → Set
-CapturedCont : Ctx → StackTy → CTy → Set
+PureCodeCont : Ctx → StackTy → CTy → Set
 
-CapturedCont Γ S₁ C = ∀{Γ₁ S₂ S₃} → Code Γ (S₁ ++ HandTy Γ₁ S₂ S₃ C ∷ S₂) S₃
+PureCodeCont Γ S₁ C = ∀{Γ₁ S₂ S₃} → Code Γ (S₁ ++ HandTy Γ₁ S₂ S₃ C ∷ S₂) S₃
 
 data Code Γ where
   -- Push plain value
@@ -123,23 +224,23 @@ data Code Γ where
   LOOKUP : A ∈ Γ → Code Γ (ValTy A ∷ S) S' → Code Γ S S'
 
   -- application
-  APP : CapturedCont Γ (ValTy B ∷ S₁) (A' , E) → 
+  APP : PureCodeCont Γ (ValTy B ∷ S₁) (A' , E) → 
         Code Γ (ValTy A ∷ ValTy (A ⇒ (B , E)) ∷ S₁ ++ HandTy Γ₁ S₂ S₃ (A' , E) ∷ S₂) S₃
 
   -- operation call
   CALLOP : (op A B) ∈ E 
-            → CapturedCont Γ (ValTy B ∷ S₁) (A' , E) -- captured code continuation
+            → PureCodeCont Γ (ValTy B ∷ S₁) (A' , E) -- PureCode code continuation
             → Code Γ (ValTy A ∷ S₁ ++ HandTy Γ₁ S S' (A' , E) ∷ S) S'
 
   BIND : Code (A ∷ Γ) (ContTy Γ (ValTy B ∷ S) C ∷ (S ++ HandTy Γ₂ S₂ S₃ C ∷ S₂)) S₃ -- let-body
-        → CapturedCont Γ (ValTy B ∷ S) C → Code Γ (ValTy A ∷ (S ++ HandTy Γ₂ S₂ S₃ C ∷ S₂)) S₃
+        → PureCodeCont Γ (ValTy B ∷ S) C → Code Γ (ValTy A ∷ (S ++ HandTy Γ₂ S₂ S₃ C ∷ S₂)) S₃
 
   -- return from function application
   RET : Code Γ (ValTy A ∷ ContTy Γ₁ (ValTy A ∷ S) C ∷ (S ++ HandTy Γ₂ S₂ S₃ C ∷ S₂)) S₃
 
   -- delimit continuation
   MARK :
-    CapturedCont Γ (ValTy B ∷ S₁) (B' , E₂) → -- meta continuation
+    PureCodeCont Γ (ValTy B ∷ S₁) (B' , E₂) → -- meta continuation
     (∀{Γ'₁} → -- computation to be handled
       Code Γ (HandTy Γ'₁ (S₁ ++ HandTy Γ₁ S₂ S₃ (B' , E₂) ∷ S₂) S₃ (A , E₁) ∷ (S₁ ++ HandTy Γ₁ S₂ S₃ (B' , E₂) ∷ S₂)) S₃ ) →
     Code Γ (ValTy (Hand ((A , E₁) ⇒ (B , E₂))) ∷ (S₁ ++ HandTy Γ₁ S₂ S₃ (B' , E₂) ∷ S₂)) S₃
@@ -171,16 +272,16 @@ data EnvVal where
   clos : (∀{Γ₁ Γ'₁ S₁ S₂ S₃ A'} → Code (A ∷ Γ) (ContTy Γ₁ (ValTy B ∷ S₁) (A' , E) ∷ (S₁ ++ HandTy Γ'₁ S₂ S₃ (A' , E) ∷ S₂)) S₃)
           → RuntimeEnv Γ → EnvVal (A ⇒ (B , E))
   -- first-class continuations
-  resump :  CapturedCont Γ (ValTy A ∷ S) (A' , E) × Stack S × RuntimeEnv Γ → 
+  resump :  PureCodeCont Γ (ValTy A ∷ S) (A' , E) × Stack S × RuntimeEnv Γ → 
             EnvVal (Hand ((A' , E) ⇒ (B , E'))) → EnvVal (A ⇒ (B , E'))
   -- first-class handlers
   fc-hand : HandlerCode Γ (A , E₁) (B , E₂) → RuntimeEnv Γ → EnvVal (Hand ((A , E₁) ⇒ (B , E₂)))
 
 RuntimeEnv Γ = All (λ A → EnvVal A) Γ
 
-data StackVal : SValTy → Setwhere
+data StackVal where
   val  : EnvVal A → StackVal (ValTy A)
-  cont : CapturedCont Γ S₁ (A , E) → RuntimeEnv Γ → StackVal (ContTy Γ S₁ (A , E))
+  cont : PureCodeCont Γ S₁ (A , E) → RuntimeEnv Γ → StackVal (ContTy Γ S₁ (A , E))
   hand : StackVal (ContTy Γ₂ (ValTy B ∷ S₁) (A' , E₂)) -- meta-continuation
           → HandlerCode Γ (A , E₁) (B , E₂) -- handler body
           → RuntimeEnv Γ -- runtime environment of the body
@@ -188,7 +289,6 @@ data StackVal : SValTy → Setwhere
   id-hand : StackVal (HandTy Γ S (ValTy A ∷ S) (A , []))
 
 Stack S = All (λ T → StackVal T) S
-
 
 _++s_ : Stack S → Stack S' → Stack (S ++ S')
 [] ++s s = s
@@ -234,8 +334,12 @@ exec (UNMARK) (val x ∷ id-hand ∷ s) env = val x ∷ s
 
 exec (INITHAND c) s env = exec c (id-hand ∷ s) env
 
+-- ************************
+-- Compilers
+-- ************************
+
 compileV : Val Γ A → Code Γ (ValTy A ∷ S) S' → Code Γ S S'
-compileC : Cmp Γ (A , E) → CapturedCont Γ (ValTy A ∷ S₁) (A' , E) → Code Γ (S₁ ++ HandTy Γ₁ S S' (A' , E) ∷ S) S'  
+compileC : Cmp Γ (A , E) → PureCodeCont Γ (ValTy A ∷ S₁) (A' , E) → Code Γ (S₁ ++ HandTy Γ₁ S S' (A' , E) ∷ S) S'  
 
 {-# TERMINATING #-}
 compileOps :
