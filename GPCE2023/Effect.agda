@@ -286,7 +286,7 @@ data StackVal where
           → HandlerCode Γ (A , E₁) (B , E₂) -- handler body
           → RuntimeEnv Γ -- runtime environment of the body
           → StackVal (HandTy Γ (S₁ ++ HandTy Γ₁ S₂ S₃ (A' , E₂) ∷ S₂) S₃ (A , E₁))
-  id-hand : StackVal (HandTy Γ S (ValTy A ∷ S) (A , []))
+  init-hand : StackVal (HandTy Γ S (ValTy A ∷ S) (A , []))
 
 Stack S = All (λ T → StackVal T) S
 
@@ -330,9 +330,9 @@ exec (MARK mk c) (val (fc-hand h env') ∷ s) env = exec c (hand (cont mk env) h
 exec (UNMARK) (val x ∷ (hand mk h env') ∷ s) env with h
 ... | (ret , ops) = exec ret (mk ∷ s) (x ∷ env')
 
-exec (UNMARK) (val x ∷ id-hand ∷ s) env = val x ∷ s
+exec (UNMARK) (val x ∷ init-hand ∷ s) env = val x ∷ s
 
-exec (INITHAND c) s env = exec c (id-hand ∷ s) env
+exec (INITHAND c) s env = exec c (init-hand ∷ s) env
 
 -- ************************
 -- Compilers
