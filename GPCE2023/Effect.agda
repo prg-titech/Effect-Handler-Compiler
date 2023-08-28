@@ -80,6 +80,7 @@ OperationClauses Γ E₁ D =
 
 
 -- ************************
+-- Intrinsically-typed interpreter:
 -- Big-step semantics & type soundness
 -- ************************
 
@@ -341,7 +342,6 @@ exec (INITHAND c) s env = exec c (init-hand ∷ s) env
 compileV : Val Γ A → Code Γ (ValTy A ∷ S) S' → Code Γ S S'
 compileC : Cmp Γ (A , E) → PureCodeCont Γ (ValTy A ∷ S₁) (A' , E) → Code Γ (S₁ ++ HandTy Γ₁ S S' (A' , E) ∷ S) S'  
 
-{-# TERMINATING #-}
 compileOps :
   OperationClauses Γ E₁ (B , E₂) →
   ∀{S₁ S₂ S₃ Γ₁ Γ'₁ A} → OperationCodes B E₁ E₂ Γ (ContTy Γ'₁ (ValTy B ∷ S₁) (A , E₂) ∷ (S₁ ++ HandTy Γ₁ S₂ S₃ (A , E₂) ∷ S₂)) S₃
