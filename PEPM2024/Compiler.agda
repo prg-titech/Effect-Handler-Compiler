@@ -12,6 +12,12 @@ open import Function using ( _∘_; _$_ )
 open import Data.Maybe.Base
 open import Relation.Binary.PropositionalEquality
 
+
+
+-- ************************
+-- Source Language L_s 
+-- ************************
+
 data VTy : Set  -- Value types
 CTy : Set       -- Computation types
 data HTy : Set  -- Handler types
@@ -71,6 +77,101 @@ data Hdl Γ where
 OperationClauses Γ E₁ D = 
   All (λ { (op A' B') → Cmp ((B' ⇒ D) ∷ A' ∷ Γ) D }) E₁
 
+-- ************************
+-- Intrinsically-typed interpreter:
+-- Big-step semantics & type soundness
+-- ************************
+
+
+-- Values after evaluation
+data Result : VTy → Set
+-- Environment
+Env : Ctx → Set
+
+-- Patterns of hole
+-- Frame A C ... A is expected type for the hole, C is the type of the whole expression
+data Frame : VTy → CTy → Set
+-- Shapes of pure continuations
+data PureStackFrame : VTy → CTy → Set
+-- Shapes of mata continuations
+data MetaStackFrame : CTy → CTy → Set
+
+data Result where
+  tt   : Result Unit
+  clos : ∀{A C Γ} → Cmp (A ∷ Γ) C → Env Γ → Result (A ⇒ C)
+  resump : PureStackFrame A C → Hdl Γ (C ⇒ D) × Env Γ → Result (A ⇒ D)
+
+-- Environment
+Env Γ = All (λ A → Result A) Γ
+
+data Frame where
+  Let□In_,_ : (Cmp (A ∷ Γ) C) → Env Γ → Frame A C
+
+data PureStackFrame where
+  empty : PureStackFrame A (A , E)
+  extend : Frame A (A' , E) → PureStackFrame A' (B , E) →
+            PureStackFrame A (B , E)
+
+data MetaStackFrame where
+  -- empty continuation
+  empty : MetaStackFrame (A , []) (A , [])
+  -- handler and meta continuation.
+  _[_[Handle□With_]] :
+    MetaStackFrame (B , E') D →
+    PureStackFrame A' (B , E') →
+    (Hdl Γ ((A , E) ⇒ (A' , E')) × Env Γ) →
+    MetaStackFrame (A , E) D
+
+-- type-safe, top-level evaluation
+eval : Cmp [] (A , []) → Result A
+
+-- type-safe evaluation for pure values
+evalv : Val Γ A → Env Γ → Result A
+
+-- type-safe evaluation for effectful computations
+{-# TERMINATING #-}
+evalc : Cmp Γ (A , E) → Env Γ →
+        PureStackFrame A (A' , E) → MetaStackFrame (A' , E) (B , []) →
+        Result B
+
+-- Resume continuation by putting given value into the hole of given continuation
+resumeCont :
+  Result A →
+  PureStackFrame A (A' , E) → MetaStackFrame (A' , E) (B , []) →
+  Result B
+
+eval c = evalc c [] empty empty
+
+resumeCont v empty (H [ K [Handle□With (ƛx ret |ƛx,r _ , env') ]]) =
+  evalc ret (v ∷ env') K H
+resumeCont v empty empty = v
+resumeCont v (extend (Let□In e2 , env) K) =
+  evalc e2 (v ∷ env) K 
+
+evalv Unit _          = tt
+evalv (Var x) env     = lookup env x
+evalv (Lam f) env     = clos f env
+
+evalc (App v1 v2) env K H with evalv v1 env
+... | clos e' env' = evalc e' (evalv v2 env ∷ env') K H
+... | resump K' h' = resumeCont (evalv v2 env) K' (H [ K [Handle□With h' ]])
+
+evalc (Return v) env K =
+  resumeCont (evalv v env) K
+
+evalc (Do l v) env K (H [ K' [Handle□With (ƛx ret |ƛx,r es , env') ]]) =
+  evalc (lookup es l) (resump K (ƛx ret |ƛx,r es , env') ∷ evalv v env ∷ env') K' H
+
+evalc (Handle e With h) env K H =
+  evalc e env empty $ (H [ K [Handle□With (h , env) ]])
+
+evalc (Let e1 In e2) env K =
+  evalc e1 env $ extend (Let□In e2 , env) K
+
+
+-- ****************************
+-- Stack & target language L_t
+-- ****************************
 
 data SValTy : Set
 StackTy : Set
@@ -193,6 +294,11 @@ exec (UNMARK) (val x ∷ (hand h env') ∷ s) env with h
 ... | (ret , ops) = exec ret s (x ∷ env')
 exec (UNMARK) (val x ∷ init-hand ∷ s) env = val x ∷ s
 exec (INITHAND c) s env = exec c (init-hand ∷ s) env
+
+
+-- ************************
+-- Compilers
+-- ************************
 
 compileV : Val Γ A → Code Γ (ValTy A ∷ S) S' → Code Γ S S'
 compileC : Cmp Γ (A , E) → PureCodeCont Γ (ValTy A ∷ S₁) (A' , E) → Code Γ (S₁ ++ HandTy Γ₁ S S' (A' , E) ∷ S) S'
