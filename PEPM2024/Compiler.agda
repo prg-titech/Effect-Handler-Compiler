@@ -6,11 +6,12 @@ open import Data.Bool using (true; false; if_then_else_; _∨_; _∧_) renaming 
 open import Data.Unit using (⊤; tt)
 open import Data.List.Relation.Unary.All using (All; _∷_; lookup; []; uncons)
 open import Data.List.Membership.Propositional using (_∈_)
-open import Data.List using ( List; _∷_; []; map; _++_ )
+open import Data.List.Relation.Unary.Any using (here; there)
+open import Data.List using ( List; _∷_; []; map; _++_; [_])
 open import Data.Product using ( _×_ ; _,_ )
 open import Function using ( _∘_; _$_ )
 open import Data.Maybe.Base
-open import Relation.Binary.PropositionalEquality
+open import Relation.Binary.PropositionalEquality hiding ([_])
 
 
 
@@ -39,7 +40,7 @@ data VTy where
 CTy = VTy × Eff
 
 data HTy where
-  _⇒_ : CTy → CTy → HTy
+  _⟹_ : CTy → CTy → HTy
 
 Ctx = List VTy
 
@@ -63,7 +64,7 @@ data Val Γ where
 data Cmp Γ where
   Return : Val Γ A → Cmp Γ (A , E)
   Do : (op A B) ∈ E → Val Γ A → Cmp Γ (B , E)
-  Handle_With_  : Cmp Γ C → Hdl Γ (C ⇒ D) → Cmp Γ D
+  Handle_With_  : Cmp Γ C → Hdl Γ (C ⟹ D) → Cmp Γ D
   App : Val Γ (A ⇒ C) → Val Γ A → Cmp Γ C
   Let_In_ : Cmp Γ (A , E) → (Cmp (A ∷ Γ) (B , E)) 
                           → Cmp Γ (B , E)
@@ -72,7 +73,7 @@ data Hdl Γ where
   ƛx_|ƛx,r_ :
     Cmp (A ∷ Γ) C → -- return clause
     OperationClauses Γ E C → -- operation clauses
-    Hdl Γ ((A , E) ⇒ C)
+    Hdl Γ ((A , E) ⟹ C)
 
 OperationClauses Γ E₁ D = 
   All (λ { (op A' B') → Cmp ((B' ⇒ D) ∷ A' ∷ Γ) D }) E₁
@@ -99,7 +100,7 @@ data MetaStackFrame : CTy → CTy → Set
 data Result where
   tt   : Result Unit
   clos : ∀{A C Γ} → Cmp (A ∷ Γ) C → Env Γ → Result (A ⇒ C)
-  resump : PureStackFrame A C → Hdl Γ (C ⇒ D) × Env Γ → Result (A ⇒ D)
+  resump : PureStackFrame A C → Hdl Γ (C ⟹ D) × Env Γ → Result (A ⇒ D)
 
 -- Environment
 Env Γ = All (λ A → Result A) Γ
@@ -119,7 +120,7 @@ data MetaStackFrame where
   _[_[Handle□With_]] :
     MetaStackFrame (B , E') D →
     PureStackFrame A' (B , E') →
-    (Hdl Γ ((A , E) ⇒ (A' , E')) × Env Γ) →
+    (Hdl Γ ((A , E) ⟹ (A' , E')) × Env Γ) →
     MetaStackFrame (A , E) D
 
 -- type-safe, top-level evaluation
@@ -303,7 +304,7 @@ exec (INITHAND c) s env = exec c (init-hand ∷ s) env
 compileV : Val Γ A → Code Γ (ValTy A ∷ S) S' → Code Γ S S'
 compileC : Cmp Γ (A , E) → PureCodeCont Γ (ValTy A ∷ S₁) (A' , E) → Code Γ (S₁ ++ HandTy Γ₁ S S' (A' , E) ∷ S) S'
 -- auxiliary function for compiling handlers
-compileH : Hdl Γ (C ⇒ D) → HandlerCode Γ C D
+compileH : Hdl Γ (C ⟹ D) → HandlerCode Γ C D
 -- auxiliary function for compiling operation clauses
 compileOps :
   OperationClauses Γ E₁ (B , E₂) →
@@ -331,3 +332,31 @@ compileOps {E₁ = (op A' B') ∷ E'}{B = B}{E₂ = E₂} (e ∷ es) {S₁} {S�
 compile : Cmp Γ (A , []) → Code Γ S (ValTy A ∷ S)
 compile c = INITHAND (compileC {S₁ = []} c UNMARK)
 
+
+-- ************************
+-- Test
+-- ************************
+
+eff : Eff
+eff = [ op Unit Unit ]
+
+c1 : Cmp [] (Unit , eff)
+c1 = Let Do (here refl) Unit In Return (Var $ here refl)
+
+h1 : Hdl [] ((Unit , eff) ⟹ (Unit , []))
+h1 = ƛx Return (Var $ here refl) |ƛx,r (App (Var $ here refl) Unit ∷ [])
+
+c : Cmp [] (Unit , [])
+c = Handle c1 With h1
+
+code1 : Code [] (HandTy Γ₁ S S' (Unit , eff) ∷ S) S'
+code1 = PUSH unit $ CALLOP {S₁ = []} (here refl) $ BIND {S = []} (LOOKUP (here refl) $ RET) UNMARK
+
+hcode : HandlerCode [] (Unit , eff) (Unit , [])
+hcode {S₁ = S₁} = LOOKUP (here refl) RET , (LOOKUP (here refl) $ PUSH unit $ APP {S₁ = ContTy _ _ _ ∷ S₁} $ RET) ∷ []
+
+code : Code [] S (ValTy Unit ∷ S)
+code = INITHAND $ MARK {S₁ = []} hcode UNMARK (code1)
+
+compileTest : compile {S = S} c ≡ code {S = S}
+compileTest = refl
